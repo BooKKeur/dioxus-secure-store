@@ -2,5 +2,14 @@
 name = "dioxus-secure-store"
 version = "0.1.0"
 edition = "2024"
+authors = [
+  "Antonin Brauer <antonin.brauer@yahoo.fr>",
+  "Yann BLANC <yannblanc33@gmail.com>"
+]
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/BooKKeur/dioxus-secure-store"
 
 [dependencies]
+dioxus = { version = "0.6.0"}
+jni = "0.21.1"
