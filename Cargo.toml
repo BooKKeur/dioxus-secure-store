@@ -11,5 +11,6 @@ readme = "README.md"
 repository = "https://github.com/BooKKeur/dioxus-secure-store"
 
 [dependencies]
-dioxus = { version = "0.6.0"}
+dioxus = { version = "0.6.3"}
+android-keystore = { path = "../android-keystore", features = ["api_level_11"] }
 jni = "0.21.1"
