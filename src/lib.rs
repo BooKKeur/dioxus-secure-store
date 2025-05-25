@@ -1,48 +1,88 @@
-use std::{fmt::Debug, hash::Hash};
+use std::{fmt::Debug, fs::exists, io, path::Path, sync::LazyLock};
 
-use android_keystore::{
-    keygen_parameter_spec::*, keypair_generator::*, utils::get_internal_directory_path, *,
-};
-use jni::objects::JObject;
+static SECURE_STORE_DIR: LazyLock<String> = LazyLock::new(|| {
+    // #[cfg(target_os = "android")]
+    android::get_internal_directory_path()
+});
 
-// #[cfg(target_os = "android")]
-const KEYSTORE_ALIAS: &str = "__dioxus_secure_store__";
-
-pub fn store<K, V>(key: K, value: V)
+/// Stores a value in the secure store using the given entry name.
+/// WARNING: If the entry already exists, it will be overwritten
+pub fn store<S, V>(entry_name: S, value: V) -> io::Result<()>
 where
-    K: Hash + Debug,
-    V: Sized + Into<String> + Debug,
+    S: Into<String>,
+    V: Into<String>,
 {
-    println!(
-        "TRACE: Storing entry with key: {:?}. value: {:?}",
-        key, value
-    )
+    let entry_name = entry_name.into();
+    let value = value.into();
+    println!("TRACE: Storing at: {entry_name}. value: {value}");
+
+    let path = format!("{}/{}", &*SECURE_STORE_DIR, entry_name);
+
+    //TODO: Encrypt data
+    std::fs::write(&path, value)
 }
 
-pub fn get<K, V>(key: K) -> Option<V>
+pub fn get<S, V>(entry_name: S) -> io::Result<V>
 where
-    K: Hash + Debug,
-    V: Sized + From<String>,
+    S: Into<String>,
+    V: From<String>,
 {
-    println!("TRACE: Getting entry with key: {:?}", key);
-    None
+    let entry_name = entry_name.into();
+    println!("TRACE: Getting from: {}", entry_name);
+
+    let path = format!("{}/{}", &*SECURE_STORE_DIR, entry_name);
+    let data: String = std::fs::read_to_string(path)?;
+
+    //TODO: Decrypt data
+    Ok(data.into())
 }
 
-pub fn delete<K>(key: K)
+pub fn delete<S>(entry_name: S) -> io::Result<()>
 where
-    K: Hash + Debug,
+    S: Into<String> + Debug,
 {
-    println!("TRACE: Deleting with key: {:?}", key);
+    let entry_name = entry_name.into();
+    println!("TRACE: Deleting from: {:?}", entry_name);
+    let path = format!("{}/{}", &*SECURE_STORE_DIR, entry_name);
+
+    if exists(&path)? && Path::new(&path).is_file() {
+        std::fs::remove_file(&path)
+    } else {
+        Ok(())
+    }
 }
 
-// #[cfg(target_os = "android")]
-pub fn _tries() -> Result<(), Exception> {
-    with_jni_env(|mut env, owned_activity| -> Result<(), Exception> {
-        let keystore = AndroidKeyStore::get_instance(&mut env);
-        keystore.load(&mut env);
+#[allow(dead_code)]
+pub mod android {
+    use std::sync::RwLock;
 
-        let activity = unsafe { JObject::from_raw(owned_activity) };
-        let path = get_internal_directory_path(&mut env, &activity);
+    use android_keystore::{keygen_parameter_spec::*, keypair_generator::*, utils::*, *};
+    use jni::{AttachGuard, objects::JObject};
+
+    const KEYSTORE_ALIAS: &str = "__dioxus_secure_store__";
+    static KEYS_GENERATED_THIS_SESSION: RwLock<bool> = RwLock::new(false);
+
+    pub fn get_internal_directory_path() -> String {
+        with_jni_env(|mut env, owned_activity| {
+            android_keystore::utils::get_internal_directory_path(&mut env, &unsafe {
+                JObject::from_raw(owned_activity)
+            })
+        })
+    }
+
+    fn generate_keypair_if_needed() {
+        if *KEYS_GENERATED_THIS_SESSION
+            .read()
+            .expect("Failed to read lock")
+        {
+            return;
+        }
+
+        *KEYS_GENERATED_THIS_SESSION
+            .write()
+            .expect("Failed to write lock") = true;
+
+        let path = get_internal_directory_path();
 
         if !std::fs::exists(format!(
             "{}/.dioxus_secure_store_keys_generated.cache",
@@ -50,6 +90,10 @@ pub fn _tries() -> Result<(), Exception> {
         ))
         .expect("Failed to check if file exists")
         {
+            return;
+        }
+
+        with_jni_env(|mut env, _| {
             std::fs::write(format!("{}/keystore_loaded.cache", path), "").expect("Failed to write");
             let keygen_parameter_spec = Builder::new(
                 KEYSTORE_ALIAS,
@@ -67,28 +111,23 @@ pub fn _tries() -> Result<(), Exception> {
             .build(&mut env);
 
             let mut keypair_generator =
-                KeyPairGenerator::get_instance(Algorithm::EC, Provider::AndroidKeyStore, &mut env)?;
+                KeyPairGenerator::get_instance(Algorithm::EC, Provider::AndroidKeyStore, &mut env)
+                    .expect("Failed to get keypair_generator");
 
             keypair_generator
                 .initialize(keygen_parameter_spec, &mut env)
-                .expect("Failed to initialize");
+                .expect("Failed to initialize keypair_generator");
 
             keypair_generator.generate_keypair(&mut env);
-            println!("Key pair generated");
-        }
+        });
+    }
 
-        let entry = keystore.get_entry(KEYSTORE_ALIAS, &mut env);
-        let priv_key = entry.get_private_key(&mut env);
+    fn get_loaded_keystore<'a>(env: &mut AttachGuard<'a>) -> AndroidKeyStore<'a> {
+        let keystore = AndroidKeyStore::get_instance(env);
 
-        println!(
-            "Private key: {}",
-            priv_key
-                .to_jni_string(&mut env)
-                .unwrap()
-                .to_str()
-                .expect("Failed to get str")
-        );
+        generate_keypair_if_needed();
 
-        Ok(())
-    })
+        keystore.load(env);
+        keystore
+    }
 }
