@@ -1,8 +1,8 @@
-use std::{fmt::Debug, fs::exists, io, path::Path, sync::LazyLock};
+use std::{fs::exists, io, sync::LazyLock};
 
 static SECURE_STORE_DIR: LazyLock<String> = LazyLock::new(|| {
     // #[cfg(target_os = "android")]
-    android::get_internal_directory_path()
+    format!("{}/secure_store", android::get_internal_directory_path())
 });
 
 /// Stores a value in the secure store using the given entry name.
@@ -16,7 +16,11 @@ where
     let value = value.into();
     println!("TRACE: Storing at: {entry_name}. value: {value}");
 
-    let path = format!("{}/{}", &*SECURE_STORE_DIR, entry_name);
+    if !exists(&*SECURE_STORE_DIR)? {
+        std::fs::create_dir_all(&*SECURE_STORE_DIR)?;
+    }
+
+    let path = format!("{}/{}.entry", &*SECURE_STORE_DIR, entry_name);
 
     //TODO: Encrypt data
     std::fs::write(&path, value)
@@ -30,7 +34,7 @@ where
     let entry_name = entry_name.into();
     println!("TRACE: Getting from: {}", entry_name);
 
-    let path = format!("{}/{}", &*SECURE_STORE_DIR, entry_name);
+    let path = format!("{}/{}.entry", &*SECURE_STORE_DIR, entry_name);
     let data: String = std::fs::read_to_string(path)?;
 
     //TODO: Decrypt data
@@ -39,17 +43,13 @@ where
 
 pub fn delete<S>(entry_name: S) -> io::Result<()>
 where
-    S: Into<String> + Debug,
+    S: Into<String>,
 {
     let entry_name = entry_name.into();
     println!("TRACE: Deleting from: {:?}", entry_name);
-    let path = format!("{}/{}", &*SECURE_STORE_DIR, entry_name);
+    let path = format!("{}/{}.entry", &*SECURE_STORE_DIR, entry_name);
 
-    if exists(&path)? && Path::new(&path).is_file() {
-        std::fs::remove_file(&path)
-    } else {
-        Ok(())
-    }
+    std::fs::remove_file(&path)
 }
 
 #[allow(dead_code)]
