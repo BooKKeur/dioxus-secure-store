@@ -100,19 +100,19 @@ pub mod android {
     }
 
     pub fn generate_keypair_if_needed() {
-        // if *KEYS_GENERATED_THIS_SESSION
-        //     .read()
-        //     .expect("Failed to read lock")
-        // {
-        //     return;
-        // }
-        // *KEYS_GENERATED_THIS_SESSION
-        //     .write()
-        //     .expect("Failed to write lock") = true;
+        if *KEYS_GENERATED_THIS_SESSION
+            .read()
+            .expect("Failed to read lock")
+        {
+            return;
+        }
+        *KEYS_GENERATED_THIS_SESSION
+            .write()
+            .expect("Failed to write lock") = true;
 
-        // if !std::fs::exists(&*PUB_KEY_FILE).expect("Failed to check if file exists") {
-        //     return;
-        // }
+        if std::fs::exists(&*PUB_KEY_FILE).expect("Failed to check if file exists") {
+            return;
+        }
 
         with_jni_env(|mut env, _| {
             let keygen_parameter_spec = Builder::new(
@@ -145,12 +145,8 @@ pub mod android {
                 .expect("Failed to get public key");
 
             let pub_key_string = public_key.get_decoded(&mut env);
-            println!("TRACE: Got public key: {}", pub_key_string);
-            let recreated_public_key =
-                PublicKey::from_x509_string(&pub_key_string, Algorithm::EC, &mut env);
-            let recreated_pub_key_string = recreated_public_key.get_decoded(&mut env);
-            println!("TRACE: Got public key: {}", recreated_pub_key_string);
-            // std::fs::write(&*PUB_KEY_FILE, pub_key_string).expect("Failed to write public key");
+
+            std::fs::write(&*PUB_KEY_FILE, pub_key_string).expect("Failed to write public key");
         });
     }
 
@@ -169,7 +165,7 @@ pub mod android {
         let pub_key_string =
             std::fs::read_to_string(&*PUB_KEY_FILE).expect("Failed to read public key");
 
-        let pub_key = PublicKey::from_x509_string(&pub_key_string, Algorithm::RSA, env);
+        let pub_key = PublicKey::from_x509_string(&pub_key_string, Algorithm::EC, env);
         println!("TRACE: Got public key: {}", pub_key.get_decoded(env));
 
         pub_key
