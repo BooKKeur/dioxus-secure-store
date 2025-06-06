@@ -1,12 +1,22 @@
-use std::{fs::exists, io, sync::LazyLock};
+use std::{
+    fs::{create_dir_all, exists},
+    io,
+    sync::LazyLock,
+};
 
 static SECURE_STORE_DIR: LazyLock<String> = LazyLock::new(|| {
     // #[cfg(target_os = "android")]
-    format!("{}/secure_store", android::get_internal_directory_path())
+    let path = format!("{}/secure_store", android::get_internal_directory_path());
+    create_dir_all(&path).unwrap();
+    path
 });
 
+static PUB_KEY_FILE: LazyLock<String> =
+    LazyLock::new(|| format!("{}/.public_key", &*SECURE_STORE_DIR));
+
 /// Stores a value in the secure store using the given entry name.
-/// WARNING: If the entry already exists, it will be overwritten
+/// # Warning
+/// If the entry already exists, it will be overwritten
 pub fn store<S, V>(entry_name: S, value: V) -> io::Result<()>
 where
     S: Into<String>,
@@ -15,6 +25,13 @@ where
     let entry_name = entry_name.into();
     let value = value.into();
     println!("TRACE: Storing at: {entry_name}. value: {value}");
+
+    if entry_name.is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Entry name cannot be empty",
+        ));
+    }
 
     if !exists(&*SECURE_STORE_DIR)? {
         std::fs::create_dir_all(&*SECURE_STORE_DIR)?;
@@ -41,6 +58,14 @@ where
     Ok(data.into())
 }
 
+/// Delete a file from the secure store
+///
+/// This function is equivalent to `std::fs::remove_file` on the target file
+///# Errors
+/// Returns errors from `std::fs::remove_file` which be due to
+/// - The file does not exists      (Indicate that the entry does no longer exist or was never stored)
+/// - Permission errors             (Should not happen if the secure store directory is not accessed directly)
+/// - Target path is a directory    (Should not happen if the secure store directory is not accessed directly)
 pub fn delete<S>(entry_name: S) -> io::Result<()>
 where
     S: Into<String>,
@@ -56,8 +81,12 @@ where
 pub mod android {
     use std::sync::RwLock;
 
-    use android_keystore::{keygen_parameter_spec::*, keypair_generator::*, utils::*, *};
+    use android_keystore::{
+        keygen_parameter_spec::*, keypair::PublicKey, keypair_generator::*, utils::*, *,
+    };
     use jni::{AttachGuard, objects::JObject};
+
+    use crate::PUB_KEY_FILE;
 
     const KEYSTORE_ALIAS: &str = "__dioxus_secure_store__";
     static KEYS_GENERATED_THIS_SESSION: RwLock<bool> = RwLock::new(false);
@@ -70,31 +99,22 @@ pub mod android {
         })
     }
 
-    fn generate_keypair_if_needed() {
-        if *KEYS_GENERATED_THIS_SESSION
-            .read()
-            .expect("Failed to read lock")
-        {
-            return;
-        }
+    pub fn generate_keypair_if_needed() {
+        // if *KEYS_GENERATED_THIS_SESSION
+        //     .read()
+        //     .expect("Failed to read lock")
+        // {
+        //     return;
+        // }
+        // *KEYS_GENERATED_THIS_SESSION
+        //     .write()
+        //     .expect("Failed to write lock") = true;
 
-        *KEYS_GENERATED_THIS_SESSION
-            .write()
-            .expect("Failed to write lock") = true;
-
-        let path = get_internal_directory_path();
-
-        if !std::fs::exists(format!(
-            "{}/.dioxus_secure_store_keys_generated.cache",
-            path
-        ))
-        .expect("Failed to check if file exists")
-        {
-            return;
-        }
+        // if !std::fs::exists(&*PUB_KEY_FILE).expect("Failed to check if file exists") {
+        //     return;
+        // }
 
         with_jni_env(|mut env, _| {
-            std::fs::write(format!("{}/keystore_loaded.cache", path), "").expect("Failed to write");
             let keygen_parameter_spec = Builder::new(
                 KEYSTORE_ALIAS,
                 &[Purpose::Encrypt, Purpose::Decrypt],
@@ -110,7 +130,7 @@ pub mod android {
             .set_user_authentication_required(true, &mut env)
             .build(&mut env);
 
-            let mut keypair_generator =
+            let keypair_generator =
                 KeyPairGenerator::get_instance(Algorithm::EC, Provider::AndroidKeyStore, &mut env)
                     .expect("Failed to get keypair_generator");
 
@@ -118,7 +138,19 @@ pub mod android {
                 .initialize(keygen_parameter_spec, &mut env)
                 .expect("Failed to initialize keypair_generator");
 
-            keypair_generator.generate_keypair(&mut env);
+            let keypair = keypair_generator.generate_keypair(&mut env);
+
+            let public_key = keypair
+                .get_public(&mut env)
+                .expect("Failed to get public key");
+
+            let pub_key_string = public_key.get_decoded(&mut env);
+            println!("TRACE: Got public key: {}", pub_key_string);
+            let recreated_public_key =
+                PublicKey::from_x509_string(&pub_key_string, Algorithm::EC, &mut env);
+            let recreated_pub_key_string = recreated_public_key.get_decoded(&mut env);
+            println!("TRACE: Got public key: {}", recreated_pub_key_string);
+            // std::fs::write(&*PUB_KEY_FILE, pub_key_string).expect("Failed to write public key");
         });
     }
 
@@ -129,5 +161,23 @@ pub mod android {
 
         keystore.load(env);
         keystore
+    }
+
+    pub fn get_public_key<'a>(env: &mut AttachGuard<'a>) -> PublicKey<'a> {
+        generate_keypair_if_needed();
+
+        let pub_key_string =
+            std::fs::read_to_string(&*PUB_KEY_FILE).expect("Failed to read public key");
+
+        let pub_key = PublicKey::from_x509_string(&pub_key_string, Algorithm::RSA, env);
+        println!("TRACE: Got public key: {}", pub_key.get_decoded(env));
+
+        pub_key
+    }
+
+    fn get_private_key<'a>(env: &mut AttachGuard<'a>) -> PrivateKey<'a> {
+        get_loaded_keystore(env)
+            .get_entry(KEYSTORE_ALIAS, env)
+            .get_private_key(env)
     }
 }
