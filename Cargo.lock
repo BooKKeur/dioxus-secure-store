@@ -4,8 +4,10 @@ version = 4
 
 [[package]]
 name = "android-keystore"
-version = "0.1.0"
+version = "0.1.1"
+source = "git+https://github.com/BooKKeur/android-keystore.git?branch=master#37a67a29e1aeb0b4d5ddb8c39c626f6a7db1a27c"
 dependencies = [
+ "base64",
  "jni",
  "ndk-context",
 ]

@@ -12,5 +12,9 @@ repository = "https://github.com/BooKKeur/dioxus-secure-store"
 
 [dependencies]
 dioxus = { version = "0.6.3"}
-android-keystore = { path = "../android-keystore", features = ["api_level_11"] }
 jni = "0.21.1"
+
+[dependencies.android-keystore]
+git = "https://github.com/BooKKeur/android-keystore.git"
+features = ["api_level_33"]
+branch = "master"
